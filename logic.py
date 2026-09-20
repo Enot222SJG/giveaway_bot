@@ -20,7 +20,8 @@ class DatabaseManager:
             conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
-                user_name TEXT
+                user_name TEXT,
+                balance INTEGER DEFAULT 0
             )
         ''')
 
@@ -42,18 +43,64 @@ class DatabaseManager:
             )
         ''')
 
+            conn.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+
+            user_cols = [c[1] for c in conn.execute('PRAGMA table_info(users)')]
+            if 'balance' not in user_cols:
+                conn.execute('ALTER TABLE users ADD COLUMN balance INTEGER DEFAULT 0')
+
             conn.commit()
 
     def add_user(self, user_id, user_name):
         conn = sqlite3.connect(self.database)
         with conn:
-            conn.execute('INSERT INTO users VALUES (?, ?)', (user_id, user_name))
+            conn.execute('INSERT INTO users (user_id, user_name) VALUES (?, ?)', (user_id, user_name))
             conn.commit()
 
     def add_prize(self, data):
         conn = sqlite3.connect(self.database)
         with conn:
             conn.executemany('''INSERT INTO prizes (image) VALUES (?)''', data)
+            conn.commit()
+
+    def get_balance(self, user_id):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor()
+            cur.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+    def add_balance(self, user_id, amount):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            conn.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
+            conn.commit()
+
+    def spend_balance(self, user_id, amount):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            conn.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, user_id))
+            conn.commit()
+
+    def get_setting(self, key, default=None):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cur.fetchone()
+            return row[0] if row else default
+
+    def set_setting(self, key, value):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            conn.execute('''INSERT INTO settings (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value''', (key, str(value)))
             conn.commit()
 
     def add_winner(self, user_id, prize_id):
