@@ -4,6 +4,10 @@ from config import DATABASE
 import os
 import cv2
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IMG_DIR = os.path.join(BASE_DIR, 'img')
+HIDDEN_IMG_DIR = os.path.join(BASE_DIR, 'hidden_img')
+
 class DatabaseManager:
     def __init__(self, database):
         self.database = database
@@ -91,18 +95,37 @@ class DatabaseManager:
             cur = conn.cursor()
             cur.execute("SELECT prize_id, image FROM prizes WHERE used = 0 ORDER BY RANDOM() LIMIT 1")
             return cur.fetchall()[0]
+
+    def get_winners_count(self):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(DISTINCT user_id) FROM winners")
+            return cur.fetchall()[0][0]
+
+    def get_rating(self):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor()
+            cur.execute('''SELECT users.user_name, COUNT(winners.user_id)
+            FROM winners
+            JOIN users ON users.user_id = winners.user_id
+            GROUP BY users.user_id
+            ORDER BY COUNT(winners.user_id) DESC
+            LIMIT 10''')
+            return cur.fetchall()
     
   
 def hide_img(img_name):
-    image = cv2.imread(f'img/{img_name}')
+    image = cv2.imread(os.path.join(IMG_DIR, img_name))
     blurred_image = cv2.GaussianBlur(image, (15, 15), 0)
     pixelated_image = cv2.resize(blurred_image, (30, 30), interpolation=cv2.INTER_NEAREST)
     pixelated_image = cv2.resize(pixelated_image, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
-    cv2.imwrite(f'hidden_img/{img_name}', pixelated_image)
+    cv2.imwrite(os.path.join(HIDDEN_IMG_DIR, img_name), pixelated_image)
 
 if __name__ == '__main__':
-    manager = DatabaseManager(DATABASE)
+    manager = DatabaseManager(os.path.join(BASE_DIR, DATABASE))
     manager.create_tables()
-    prizes_img = os.listdir('img')
+    prizes_img = os.listdir(IMG_DIR)
     data = [(x,) for x in prizes_img]
     manager.add_prize(data)
