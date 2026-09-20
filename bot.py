@@ -49,6 +49,23 @@ def handle_rating(message):
     bot.reply_to(message, text)
 
 
+@bot.message_handler(commands=['my_score'])
+def get_my_score(message):
+    user_id = message.chat.id
+    won = {x[0] for x in manager.get_winners_img(user_id)}
+    if not won:
+        bot.reply_to(message, "Ты пока не выиграл ни одного приза!")
+        return
+    collage_path = os.path.join(BASE_DIR, 'collage.png')
+    image_paths = [os.path.join(IMG_DIR, name) if name in won
+                   else os.path.join(HIDDEN_IMG_DIR, name)
+                   for name in os.listdir(IMG_DIR)]
+    collage = create_collage(image_paths)
+    cv2.imwrite(collage_path, collage)
+    with open(collage_path, 'rb') as photo:
+        bot.send_photo(user_id, photo)
+
+
 def send_message():
     prize_id, img = manager.get_random_prize()[:2]
     manager.mark_prize_used(prize_id)

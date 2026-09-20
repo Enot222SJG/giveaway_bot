@@ -3,6 +3,8 @@ from datetime import datetime
 from config import DATABASE 
 import os
 import cv2
+import numpy as np
+from math import ceil, floor, sqrt
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_DIR = os.path.join(BASE_DIR, 'img')
@@ -114,6 +116,17 @@ class DatabaseManager:
             ORDER BY COUNT(winners.user_id) DESC
             LIMIT 10''')
             return cur.fetchall()
+
+    def get_winners_img(self, user_id):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor()
+            cur.execute('''
+            SELECT image FROM winners
+            INNER JOIN prizes ON
+            winners.prize_id = prizes.prize_id
+            WHERE user_id = ?''', (user_id, ))
+            return cur.fetchall()
     
   
 def hide_img(img_name):
@@ -122,6 +135,30 @@ def hide_img(img_name):
     pixelated_image = cv2.resize(blurred_image, (30, 30), interpolation=cv2.INTER_NEAREST)
     pixelated_image = cv2.resize(pixelated_image, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
     cv2.imwrite(os.path.join(HIDDEN_IMG_DIR, img_name), pixelated_image)
+
+def create_collage(image_paths, tile_size=512):
+    images = []
+    for path in image_paths:
+        image = cv2.imread(path)
+        if image is None:
+            continue
+        image = cv2.resize(image, (tile_size, tile_size), interpolation=cv2.INTER_AREA)
+        images.append(image)
+
+    num_images = len(images)
+    if num_images == 0:
+        raise ValueError("Нет изображений для коллажа")
+
+    num_cols = floor(sqrt(num_images))
+    num_rows = ceil(num_images / num_cols)
+
+    collage = np.zeros((num_rows * tile_size, num_cols * tile_size, 3), dtype=np.uint8)
+
+    for i, image in enumerate(images):
+        row = i // num_cols
+        col = i % num_cols
+        collage[row*tile_size:(row+1)*tile_size, col*tile_size:(col+1)*tile_size, :] = image
+    return collage
 
 if __name__ == '__main__':
     manager = DatabaseManager(os.path.join(BASE_DIR, DATABASE))
