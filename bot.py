@@ -1,112 +1,119 @@
-from telebot import TeleBot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from logic import *
-import schedule
-import threading
-import time
+import asyncio
 import os
-from config import *
+import cv2
 
-bot = TeleBot(API_TOKEN)
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from config import API_TOKEN
+from logic import BASE_DIR, IMG_DIR, HIDDEN_IMG_DIR, DATABASE, DatabaseManager, create_collage, hide_img
+
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
+
 DB_PATH = os.path.join(BASE_DIR, DATABASE)
+manager = DatabaseManager(DB_PATH)
 
-def gen_markup(id):
-    markup = InlineKeyboardMarkup()
-    markup.row_width = 1
-    markup.add(InlineKeyboardButton("Получить!", callback_data=id))
-    return markup
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback_query(call):
+def gen_markup(prize_id):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Получить!", callback_data=str(prize_id))
+    builder.adjust(1)
+    return builder.as_markup()
 
-    prize_id = call.data
-    user_id = call.message.chat.id
+
+@dp.callback_query(F.data)
+async def callback_query(callback: CallbackQuery):
+    prize_id = int(callback.data)
+    user_id = callback.message.chat.id
 
     if manager.get_winners_count() >= 3:
-        bot.answer_callback_query(call.id, "Увы, призы уже закончились!")
+        await callback.answer("Увы, призы уже закончились!")
         return
 
     if manager.add_winner(user_id, prize_id) == 0:
-        bot.answer_callback_query(call.id, "Ты уже получал этот приз!")
+        await callback.answer("Ты уже получал этот приз!")
         return
 
     img = manager.get_prize_img(prize_id)
-    with open(os.path.join(IMG_DIR, img), 'rb') as photo:
-        bot.send_photo(user_id, photo)
-    bot.answer_callback_query(call.id, "Поздравляем! Ты выиграл приз!")
+    await callback.message.answer_photo(photo=FSInputFile(os.path.join(IMG_DIR, img)))
+    await callback.answer("Поздравляем! Ты выиграл приз!")
 
 
-@bot.message_handler(commands=['rating'])
-def handle_rating(message):
+@dp.message(Command("rating"))
+async def handle_rating(message: Message):
     rating = manager.get_rating()
     if not rating:
-        bot.reply_to(message, "Пока никто не получил призов.")
+        await message.answer("Пока никто не получил призов.")
         return
     text = "Рейтинг пользователей:\n"
     for i, (user_name, count) in enumerate(rating, 1):
         name = f"@{user_name}" if user_name else "Без имени"
         text += f"{i}. {name} — {count} приз(ов)\n"
-    bot.reply_to(message, text)
+    await message.answer(text)
 
 
-@bot.message_handler(commands=['my_score'])
-def get_my_score(message):
+@dp.message(Command("my_score"))
+async def get_my_score(message: Message):
     user_id = message.chat.id
     won = {x[0] for x in manager.get_winners_img(user_id)}
     if not won:
-        bot.reply_to(message, "Ты пока не выиграл ни одного приза!")
+        await message.answer("Ты пока не выиграл ни одного приза!")
         return
-    collage_path = os.path.join(BASE_DIR, 'collage.png')
+
+    collage_path = os.path.join(BASE_DIR, "collage.png")
     image_paths = [os.path.join(IMG_DIR, name) if name in won
                    else os.path.join(HIDDEN_IMG_DIR, name)
                    for name in os.listdir(IMG_DIR)]
     collage = create_collage(image_paths)
     cv2.imwrite(collage_path, collage)
-    with open(collage_path, 'rb') as photo:
-        bot.send_photo(user_id, photo)
+    await message.answer_photo(photo=FSInputFile(collage_path))
 
 
-def send_message():
-    prize_id, img = manager.get_random_prize()[:2]
+@dp.message(Command("start"))
+async def handle_start(message: Message):
+    user_id = message.chat.id
+    if user_id in manager.get_users():
+        await message.answer("Ты уже зарегистрирован!")
+    else:
+        manager.add_user(user_id, message.from_user.username)
+        await message.answer(
+            "Привет! Добро пожаловать!\n"
+            "Тебя успешно зарегистрировали!\n"
+            "Каждый час тебе будут приходить новые картинки и у тебя будет шанс их получить!\n"
+            "Для этого нужно быстрее всех нажать на кнопку 'Получить!'\n\n"
+            "Только три первых пользователя получат картинку!)"
+        )
+
+
+async def send_message():
+    prize = manager.get_random_prize()
+    if not prize:
+        return
+    prize_id, img = prize[:2]
     manager.mark_prize_used(prize_id)
     hide_img(img)
     for user in manager.get_users():
-        with open(os.path.join(HIDDEN_IMG_DIR, img), 'rb') as photo:
-            bot.send_photo(user, photo, reply_markup=gen_markup(id = prize_id))
-        
+        await bot.send_photo(
+            chat_id=user,
+            photo=FSInputFile(os.path.join(HIDDEN_IMG_DIR, img)),
+            reply_markup=gen_markup(prize_id),
+        )
 
-def shedule_thread():
-    schedule.every().minute.do(send_message) # Здесь ты можешь задать периодичность отправки картинок
+
+async def scheduler():
     while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-@bot.message_handler(commands=['start'])
-def handle_start(message):
-    user_id = message.chat.id
-    if user_id in manager.get_users():
-        bot.reply_to(message, "Ты уже зарегестрирован!")
-    else:
-        manager.add_user(user_id, message.from_user.username)
-        bot.reply_to(message, """Привет! Добро пожаловать! 
-Тебя успешно зарегистрировали!
-Каждый час тебе будут приходить новые картинки и у тебя будет шанс их получить!
-Для этого нужно быстрее всех нажать на кнопку 'Получить!'
-
-Только три первых пользователя получат картинку!)""")
-        
+        await send_message()
+        await asyncio.sleep(60)
 
 
-def polling_thread():
-    bot.polling(none_stop=True)
-
-if __name__ == '__main__':
-    manager = DatabaseManager(DB_PATH)
+async def main():
     manager.create_tables()
+    asyncio.create_task(scheduler())
+    await dp.start_polling(bot)
 
-    polling_thread = threading.Thread(target=polling_thread)
-    polling_shedule  = threading.Thread(target=shedule_thread)
 
-    polling_thread.start()
-    polling_shedule.start()
-  
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -96,7 +96,8 @@ class DatabaseManager:
         with conn:
             cur = conn.cursor()
             cur.execute("SELECT prize_id, image FROM prizes WHERE used = 0 ORDER BY RANDOM() LIMIT 1")
-            return cur.fetchall()[0]
+            rows = cur.fetchall()
+            return rows[0] if rows else None
 
     def get_winners_count(self):
         conn = sqlite3.connect(self.database)
